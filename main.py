@@ -16,19 +16,21 @@ import aiohttp
 from astrbot.api import AstrBotConfig, logger
 from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.star import Context, Star, register
+from .renderer import RENDER_OPTIONS, T2I_STYLE, T2I_TMPL
+
 
 API_BASE = "https://jwgl-api.ibeike.work"
 API_PATH = "/rest_rooms"
 
-SLOT_COUNT = 6                       # 每天 6 个大节
+SLOT_COUNT = 6  # 每天 6 个大节
 SLOT_LABELS = ["一大节", "二大节", "三大节", "四大节", "五大节", "六大节"]
 WEEKDAY_CN = ("一", "二", "三", "四", "五", "六", "日")
 
-CACHE_KEY = "free_rooms_cache"       # 插件 KV 存储键
+CACHE_KEY = "free_rooms_cache"  # 插件 KV 存储键
 DEFAULT_REFRESH_TIME = "07:00"
-TICK_SECONDS = 30                    # 调度器轮询间隔（秒）
-REQUEST_TIMEOUT = 20                 # 单个请求超时（秒）
-REQUEST_RETRY = 2                    # 单个请求重试次数
+TICK_SECONDS = 30  # 调度器轮询间隔（秒）
+REQUEST_TIMEOUT = 20  # 单个请求超时（秒）
+REQUEST_RETRY = 2  # 单个请求重试次数
 
 HEADERS = {
     "X-Requested-With": "XMLHttpRequest",
@@ -37,48 +39,6 @@ HEADERS = {
         "(KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36"
     ),
 }
-
-T2I_TMPL = """
-<div class="card">
-  <div class="title">{{ title }}</div>
-  <div class="sub">{{ buildings|length }} 栋楼有教室空闲 · 数据更新于 {{ fetched_at }}</div>
-  {% for b in buildings %}
-  <div class="bname">{{ b.name }}</div>
-  <table>
-    <thead>
-      <tr><th class="c0">楼层</th>{% for h in headers %}<th>{{ h }}</th>{% endfor %}</tr>
-    </thead>
-    <tbody>
-      {% for row in b.rows %}
-      <tr>
-        <td class="c0">{{ row.floor }}层</td>
-        {% for c in row.cells %}<td>{{ c }}</td>{% endfor %}
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-  {% endfor %}
-  <div class="foot">数据来源：iBeiKe 教务公开接口</div>
-</div>
-"""
-
-T2I_STYLE = """
-* { box-sizing: border-box; }
-body { margin: 0; padding: 18px; background: #f5f6f8; color: #20242b;
-       font-family: "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", sans-serif; }
-.card { background: #fff; border-radius: 12px; padding: 18px 20px 14px;
-        width: fit-content; min-width: 680px; max-width: 1180px; }
-.title { font-size: 22px; font-weight: 700; }
-.sub { font-size: 12px; color: #8a9099; margin: 4px 0 10px; }
-.bname { font-size: 15px; font-weight: 700; margin: 14px 0 6px; padding-left: 8px;
-         border-left: 4px solid #3b82f6; line-height: 1.2; }
-table { border-collapse: collapse; width: 100%; table-layout: fixed; }
-th, td { border: 1px solid #e3e6ea; padding: 5px 7px; font-size: 13px;
-         text-align: center; vertical-align: top; word-break: break-word; line-height: 1.45; }
-th { background: #eef2f7; font-weight: 600; color: #48505c; }
-td.c0 { width: 56px; background: #fafbfc; color: #6b7280; font-weight: 600; }
-.foot { margin-top: 12px; font-size: 11px; color: #a0a6ae; text-align: right; }
-"""
 
 
 @register(
@@ -109,7 +69,9 @@ class ChaiPlugin(Star):
         self._http = aiohttp.ClientSession(
             timeout=aiohttp.ClientTimeout(total=REQUEST_TIMEOUT), headers=HEADERS
         )
-        self._task = asyncio.create_task(self._scheduler_loop(), name="chai-free-room-scheduler")
+        self._task = asyncio.create_task(
+            self._scheduler_loop(), name="chai-free-room-scheduler"
+        )
         logger.info(
             "[chai] 无课教室插件已启动，缓存日期: %s",
             ", ".join(sorted(self._cache)) or "（空）",
@@ -174,7 +136,10 @@ class ChaiPlugin(Star):
 
     def _refresh_time(self) -> tuple[int, int]:
         """读取并缓存配置里的刷新时间，配置变更后自动生效。"""
-        raw = str(self.config.get("refresh_time", DEFAULT_REFRESH_TIME) or DEFAULT_REFRESH_TIME)
+        raw = str(
+            self.config.get("refresh_time", DEFAULT_REFRESH_TIME)
+            or DEFAULT_REFRESH_TIME
+        )
         if raw != self._time_raw:
             self._time_raw = raw
             try:
@@ -184,7 +149,11 @@ class ChaiPlugin(Star):
                     raise ValueError("out of range")
                 self._time_hhmm = (hh, mm)
             except Exception:  # noqa: BLE001 - 配置错误不应影响插件运行
-                logger.warning("[chai] refresh_time 配置无效: %r，回退为 %s", raw, DEFAULT_REFRESH_TIME)
+                logger.warning(
+                    "[chai] refresh_time 配置无效: %r，回退为 %s",
+                    raw,
+                    DEFAULT_REFRESH_TIME,
+                )
                 self._time_hhmm = (7, 0)
         return self._time_hhmm
 
@@ -331,11 +300,12 @@ class ChaiPlugin(Star):
                 {
                     "title": "%s 无课教室" % label,
                     "headers": SLOT_LABELS,
+                    "slot_count": SLOT_COUNT,
                     "buildings": buildings,
                     "fetched_at": entry.get("fetched_at", "未知"),
                     "style": T2I_STYLE,
                 },
-                options={"type": "jpeg", "quality": 90, "full_page": True},
+                options=RENDER_OPTIONS,
             )
             return event.image_result(url)
         except Exception as exc:  # noqa: BLE001 - 文转图不可用时降级
@@ -350,13 +320,17 @@ class ChaiPlugin(Star):
             for name, floors in (slots.get(str(slot)) or {}).items():
                 by_floor = grid.setdefault(name, {})
                 for floor, rooms in floors.items():
-                    by_floor.setdefault(floor, [""] * SLOT_COUNT)[slot - 1] = "、".join(rooms)
+                    by_floor.setdefault(floor, [""] * SLOT_COUNT)[slot - 1] = "、".join(
+                        rooms
+                    )
 
         result: list[dict[str, Any]] = []
         for name, floors in grid.items():
             rows = [
                 {"floor": floor, "cells": cells}
-                for floor, cells in sorted(floors.items(), key=lambda kv: ChaiPlugin._floor_key(kv[0]))
+                for floor, cells in sorted(
+                    floors.items(), key=lambda kv: ChaiPlugin._floor_key(kv[0])
+                )
                 if any(cells)  # 没有空教室的楼层不渲染
             ]
             if rows:  # 没有任何空闲楼层的楼栋也不渲染
@@ -385,7 +359,9 @@ class ChaiPlugin(Star):
             lines.append("【%s】" % building["name"])
             for row in building["rows"]:
                 cells = [
-                    "%s %s" % (SLOT_LABELS[i], c) for i, c in enumerate(row["cells"]) if c
+                    "%s %s" % (SLOT_LABELS[i], c)
+                    for i, c in enumerate(row["cells"])
+                    if c
                 ]
                 lines.append("  %s层：%s" % (row["floor"], "；".join(cells)))
         return "\n".join(lines)
