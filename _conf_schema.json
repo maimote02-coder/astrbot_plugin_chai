@@ -1,0 +1,8 @@
+{
+  "refresh_time": {
+    "description": "每日刷新时间",
+    "type": "string",
+    "default": "07:00",
+    "hint": "24 小时制 HH:MM，例如 07:00。插件会在该时间之后查询当天与次日的无课教室并缓存，/wk 与 /mrwk 优先使用缓存。"
+  }
+}

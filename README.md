@@ -1,14 +1,66 @@
-# astrbot-plugin-helloworld
+# astrbot_plugin_chai
 
-AstrBot 插件模板 / A template plugin for AstrBot plugin feature
+北科大（iBeiKe）**无课教室**查询插件：查今天/明天哪些教室空着，直接出图。
 
-> [!NOTE]
-> This repo is just a template of [AstrBot](https://github.com/AstrBotDevs/AstrBot) Plugin.
-> 
-> [AstrBot](https://github.com/AstrBotDevs/AstrBot) is an agentic assistant for both personal and group conversations. It can be deployed across dozens of mainstream instant messaging platforms, including QQ, Telegram, Feishu, DingTalk, Slack, LINE, Discord, Matrix, etc. In addition, it provides a reliable and extensible conversational AI infrastructure for individuals, developers, and teams. Whether you need a personal AI companion, an intelligent customer support agent, an automation assistant, or an enterprise knowledge base, AstrBot enables you to quickly build AI applications directly within your existing messaging workflows.
+## 指令
 
-# Supports
+| 指令 | 别名 | 说明 |
+| --- | --- | --- |
+| `/wk` | `/无课` | 查询**今天**的无课教室 |
+| `/mrwk` | `/明日无课` | 查询**明天**的无课教室 |
 
-- [AstrBot Repo](https://github.com/AstrBotDevs/AstrBot)
-- [AstrBot Plugin Development Docs (Chinese)](https://docs.astrbot.app/dev/star/plugin-new.html)
-- [AstrBot Plugin Development Docs (English)](https://docs.astrbot.app/en/dev/star/plugin-new.html)
+返回一张图片：按楼栋分组，每栋楼一张表，**横轴 1-6 大节，纵轴楼层**，
+没有空教室的楼层和楼栋不渲染。
+
+## 输出示例
+
+```
+9月15日（周二）无课教室
+逸夫楼
+        一大节   二大节   三大节   四大节   五大节   六大节
+7层      704                       704
+9层      901、903  901、903、904    901、903  901、903、904
+信息楼
+...
+```
+
+（实际以图片形式发送；文转图服务不可用时自动降级为上面的纯文本。）
+
+## 配置
+
+| 配置项 | 类型 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `refresh_time` | string | `07:00` | 每日自动刷新的时间，24 小时制 `HH:MM` |
+
+## 工作方式
+
+```
+每天 refresh_time（默认 07:00）
+   └─ 查询「今天」6 个大节 + 「明天」6 个大节 = 12 次请求
+        └─ 结果写入插件 KV 缓存（按日期分组）
+
+/wk 或 /mrwk
+   └─ 命中缓存 -> 直接渲染出图
+   └─ 未命中   -> 即时查询该天 6 个大节，写回缓存后再渲染
+```
+
+- 缓存按**日期**为键，每次刷新都会**覆盖**对应日期的数据（今天查的「明天」会在次日被新数据覆盖，而不是追加）。
+- 缓存只保留「今天」和「明天」两个日期，不会无限增长。
+- 定时任务随插件启用而启动、随插件停用/卸载而取消（`initialize` / `terminate`）。
+
+## 数据来源
+
+`GET https://jwgl-api.ibeike.work/rest_rooms?a=<大节>&b=<大节>&date=YYYY-MM-DD`
+
+该校教务公开接口，**无需鉴权**，不涉及任何个人账号、课表或身份信息。
+
+> 注意：该接口只提供「今天 ± 2 天」的数据，因此本插件只做今天/明天两天。
+
+## 已知限制
+
+- 接口属于非官方公开接口，校方调整后可能需要适配。
+- 只纳管了部分教学楼的部分教室（例如逸夫楼的 404 不在纳管清单里）。
+
+## 许可
+
+MIT
