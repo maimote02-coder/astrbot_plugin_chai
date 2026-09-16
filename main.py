@@ -3,12 +3,17 @@
 数据来源为 iBeiKe 教务公开接口 https://jwgl-api.ibeike.work/rest_rooms ，无需任何鉴权。
 插件每天在固定时间预取「当天 + 次日」共 6 个大节的数据并持久化，
 /wk 与 /mrwk 指令优先复用缓存，缓存缺失时现查。
+
+图片由 Pillow 直接绘制（renderer.py），不依赖 HTML/Playwright 文转图，
+因此在没有浏览器环境的服务器上也能稳定出图；万一系统缺少中文字体，
+会自动降级为纯文本输出。
 """
 
 from __future__ import annotations
 
 import asyncio
 from datetime import date, datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 import aiohttp
@@ -16,14 +21,14 @@ import aiohttp
 from astrbot.api import AstrBotConfig, logger
 from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.star import Context, Star, register
-from .renderer import RENDER_OPTIONS, T2I_STYLE, T2I_TMPL
+from .renderer import SLOT_LABELS, RenderError, render_schedule
 
 
 API_BASE = "https://jwgl-api.ibeike.work"
 API_PATH = "/rest_rooms"
 
-SLOT_COUNT = 6  # 每天 6 个大节
-SLOT_LABELS = ["一大节", "二大节", "三大节", "四大节", "五大节", "六大节"]
+PLUGIN_NAME = "astrbot_plugin_chai"
+SLOT_COUNT = len(SLOT_LABELS)  # 每天 6 个大节
 WEEKDAY_CN = ("一", "二", "三", "四", "五", "六", "日")
 
 CACHE_KEY = "free_rooms_cache"  # 插件 KV 存储键
@@ -31,6 +36,8 @@ DEFAULT_REFRESH_TIME = "07:00"
 TICK_SECONDS = 30  # 调度器轮询间隔（秒）
 REQUEST_TIMEOUT = 20  # 单个请求超时（秒）
 REQUEST_RETRY = 2  # 单个请求重试次数
+IMAGE_KEEP = 8  # 数据目录里最多保留多少张历史图片
+IMAGE_SUFFIX = ".jpg"
 
 HEADERS = {
     "X-Requested-With": "XMLHttpRequest",
@@ -45,7 +52,7 @@ HEADERS = {
     "astrbot_plugin_chai",
     "maimote02-coder",
     "查询北科大无课教室，按楼栋/楼层/大节渲染为图片。",
-    "1.0.0",
+    "1.1.0",
 )
 class ChaiPlugin(Star):
     """无课教室查询插件。"""
@@ -60,6 +67,45 @@ class ChaiPlugin(Star):
         self._last_run_date: str | None = None
         self._time_raw: str | None = None
         self._time_hhmm: tuple[int, int] = (7, 0)
+
+        self._data_dir = self._resolve_data_dir()
+        self._images_dir = self._data_dir / "images"
+        self._fonts_dir = self._data_dir / "fonts"
+
+    # --------------------------------------------------------- 路径
+    def _resolve_data_dir(self) -> Path:
+        """插件数据目录 ``data/plugin_data/<插件名>/``。
+
+        拿不到 AstrBot 的路径（例如脱离框架单测）时退回当前目录下的 ``data``。
+        """
+        name = str(getattr(self, "name", "") or PLUGIN_NAME)
+        try:
+            from astrbot.core.utils.astrbot_path import get_astrbot_data_path
+
+            base = Path(get_astrbot_data_path())
+        except Exception:  # noqa: BLE001 - 老版本或非常规环境下退回相对目录
+            base = Path("data")
+        return base / "plugin_data" / name
+
+    def _image_path(self, d: date) -> Path:
+        """某天的图片输出路径（文件名带日期，天然避免旧图串味）。"""
+        return self._images_dir / ("free_rooms_%s%s" % (d.isoformat(), IMAGE_SUFFIX))
+
+    def _prune_images(self) -> None:
+        """只保留最近生成的若干张图片，避免插件数据目录无限膨胀。"""
+        try:
+            files = sorted(
+                self._images_dir.glob("free_rooms_*" + IMAGE_SUFFIX),
+                key=lambda path: path.stat().st_mtime,
+                reverse=True,
+            )
+        except OSError:
+            return
+        for path in files[IMAGE_KEEP:]:
+            try:
+                path.unlink()
+            except OSError:
+                pass
 
     # --------------------------------------------------------- 生命周期
     async def initialize(self) -> None:
@@ -294,23 +340,26 @@ class ChaiPlugin(Star):
             return event.plain_result("%s 暂时没有空闲教室。" % label)
 
         entry = self._cache.get(d.isoformat()) or {}
+        target = self._image_path(d)
         try:
-            url = await self.html_render(
-                T2I_TMPL,
-                {
-                    "title": "%s 无课教室" % label,
-                    "headers": SLOT_LABELS,
-                    "slot_count": SLOT_COUNT,
-                    "buildings": buildings,
-                    "fetched_at": entry.get("fetched_at", "未知"),
-                    "style": T2I_STYLE,
-                },
-                options=RENDER_OPTIONS,
+            # Pillow 绘制是同步的，丢到线程里跑，避免阻塞事件循环
+            await asyncio.to_thread(
+                render_schedule,
+                buildings,
+                "%s 无课教室" % label,
+                str(entry.get("fetched_at") or "未知"),
+                target,
+                font_dir=self._fonts_dir,
             )
-            return event.image_result(url)
-        except Exception as exc:  # noqa: BLE001 - 文转图不可用时降级
+        except RenderError as exc:
+            logger.warning("[chai] 渲染不可用，降级为文本输出: %s", exc)
+            return event.plain_result(self._text_fallback(label, buildings))
+        except Exception as exc:  # noqa: BLE001 - 渲染异常不应影响回复
             logger.error("[chai] 渲染无课教室图片失败: %s", exc, exc_info=True)
             return event.plain_result(self._text_fallback(label, buildings))
+
+        self._prune_images()
+        return event.image_result(str(target))
 
     @staticmethod
     def _transpose(slots: dict[str, Any]) -> list[dict[str, Any]]:
