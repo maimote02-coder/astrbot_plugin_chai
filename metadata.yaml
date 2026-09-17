@@ -1,22 +1,7 @@
 name: astrbot_plugin_chai
 display_name: 北科大无课教室
-short_desc: 查北科大的空教室，直接出图。
-desc: |
-  查询北京科技大学（iBeiKe）各楼栋的空闲教室，按「横轴 1-6 大节 × 纵轴楼层」渲染成图片。
-
-  指令：
-  - /wk（别名 /无课）—— 查询今天的无课教室
-  - /mrwk（别名 /明日无课）—— 查询明天的无课教室
-
-  插件每天在配置的时间点（默认 07:00）自动拉取当天与次日共 6 个大节的数据并缓存，
-  白天内的指令请求直接复用缓存；缓存缺失时会即时查询。
-
-  数据来源为 iBeiKe 教务公开接口，无需登录，也不涉及任何个人账号信息。
-version: 1.0.0
+desc: 查北科大的空教室，直接出图。
+version: 1.1.0
 author: maimote02-coder
 repo: https://github.com/maimote02-coder/astrbot_plugin_chai
 astrbot_version: ">=4.9.2"
-tags:
-  - 北科大
-  - 课表
-  - 教室
